@@ -221,6 +221,7 @@ export class Runtime {
   private handlers = new Map<string, Handler>();
   private shared = new Map<string, V>();
   private notes = new Set<string>();
+  private eventError: string | null = null;
   private stack: Inst[] = [];
   private steps = 0;
   private uid = 1;
@@ -241,6 +242,7 @@ export class Runtime {
   }
 
   setFiles(list: { path: string; src: string }[]) {
+    this.eventError = null;
     const seen = new Set<string>();
     for (const { path, src } of list) {
       seen.add(path);
@@ -269,6 +271,7 @@ export class Runtime {
   resetState() {
     this.state.clear();
     this.shared.clear();
+    this.eventError = null;
   }
 
   targets(path: string): PreviewTarget[] {
@@ -299,6 +302,7 @@ export class Runtime {
     resetRandom();
     const file = this.files.get(path);
     const errors: Diagnostic[] = (file?.errors ?? []).map((e) => ({ message: e.message, ...lineCol(file!.src, e.pos) }));
+    if (this.eventError) errors.push({ message: this.eventError, line: 0, column: 0 });
     const stats = { views: 0, depth: 0, heavy: 0 };
     if (!file) return { tree: null, errors, notes: [], stats };
     try {
@@ -317,13 +321,14 @@ export class Runtime {
     const h = this.handlers.get(ev.id);
     if (!h) return false;
     this.steps = 0;
+    this.eventError = null;
     try {
       if (h.kind === "tap") h.run();
       else if (h.kind === "set") h.run(ev.value);
       else if (ev.kind === "increment") h.inc();
       else if (ev.kind === "decrement") h.dec();
     } catch (e) {
-      this.notes.add(e instanceof Error ? e.message : String(e));
+      this.eventError = e instanceof Error ? e.message : String(e);
     }
     return true;
   }

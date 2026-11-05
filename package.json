@@ -13,6 +13,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "check:preview": "node scripts/preview-check.cjs",
+    "check:files": "node scripts/file-check.cjs",
     "tauri": "tauri",
     "release": "node scripts/release.mjs"
   },

@@ -42,9 +42,9 @@ export function isDirty(path: string): boolean {
   return !!d && d.model.getAlternativeVersionId() !== d.savedVersion;
 }
 
-export function markSaved(path: string) {
+export function markSaved(path: string, version: number) {
   const d = getDoc(path);
-  if (d) d.savedVersion = d.model.getAlternativeVersionId();
+  if (d) d.savedVersion = version;
 }
 
 export function disposeDoc(path: string) {

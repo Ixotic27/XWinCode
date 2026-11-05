@@ -1151,9 +1151,9 @@ export default function Canvas({ path, onClose }: { path: string; onClose: () =>
         </PreviewBoundary>
       </div>
       <div className="canvas-foot">
-        {error && error.line > 0 && (
+        {error && (
           <span className="canvas-err" title={error.message}>
-            {t("canvas.syntax", { line: error.line, message: error.message })}
+            {error.line > 0 ? t("canvas.syntax", { line: error.line, message: error.message }) : `${t("canvas.error")} ${error.message}`}
           </span>
         )}
         {perf && (

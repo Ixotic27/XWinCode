@@ -54,7 +54,7 @@ pub fn read_text_file(path: String) -> Result<String, String> {
     if bytes.iter().take(8000).any(|b| *b == 0) {
         return Err(t!("err.binaryFile"));
     }
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    String::from_utf8(bytes).map_err(err)
 }
 
 #[tauri::command]
@@ -170,4 +170,25 @@ pub async fn search_project(root: String, query: String, case_sensitive: bool) -
     })
     .await
     .map_err(err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_roundtrip_and_invalid_utf8_rejection() {
+        let path = std::env::temp_dir().join(format!("xwc-text-test-{}.swift", std::process::id()));
+        let name = path.to_string_lossy().into_owned();
+        let text = "Text(\"Café 🚀\")\r\n";
+        write_text_file(name.clone(), text.into()).unwrap();
+        assert_eq!(read_text_file(name.clone()).unwrap(), text);
+        let invalid = [b'/', b'/', 0xff];
+        std::fs::write(&path, invalid).unwrap();
+        let result = read_text_file(name);
+        let preserved = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert!(result.is_err(), "Opening invalid UTF-8 must not silently replace bytes");
+        assert_eq!(preserved, invalid);
+    }
 }

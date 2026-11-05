@@ -1,7 +1,7 @@
 import { t, tn } from "../i18n";
 import { api } from "./ipc";
 import { isDirty } from "./models";
-import { useStore } from "./store";
+import { hasPendingWrite, useStore } from "./store";
 
 export async function appWindow() {
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -10,10 +10,11 @@ export async function appWindow() {
 
 export async function requestClose() {
   const s = useStore.getState();
-  const dirty = s.tabs.filter((p) => isDirty(p));
+  const dirty = s.tabs.filter((p) => isDirty(p) || hasPendingWrite(p));
   if (dirty.length) {
-    if (s.settings?.autoSave) await s.saveAll();
-    else {
+    if (s.settings?.autoSave) {
+      if (!(await s.saveAll())) return;
+    } else {
       const { ask } = await import("@tauri-apps/plugin-dialog");
       const ok = await ask(tn("dialog.quitUnsaved", dirty.length), {
         title: "XWinCode",

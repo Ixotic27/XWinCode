@@ -134,8 +134,8 @@ interface Actions {
   closeTab(path: string): Promise<void>;
   setActive(path: string): void;
   touchDirty(): void;
-  save(path?: string, options?: { format?: boolean }): Promise<void>;
-  saveAll(): Promise<void>;
+  save(path?: string, options?: { format?: boolean }): Promise<boolean>;
+  saveAll(): Promise<boolean>;
   build(action: BuildAction): Promise<void>;
   stop(): Promise<void>;
   refreshDevices(): Promise<void>;
@@ -184,8 +184,13 @@ let deviceLineId = 0;
 let terminalKey = 0;
 let toastId = 0;
 const k = (p: string) => p.toLowerCase();
+const pendingWrites = new Map<string, Promise<void>>();
 const remindedInstalls = new Set<string>();
 let trustFlow: Promise<boolean> | null = null;
+
+export function hasPendingWrite(path: string): boolean {
+  return pendingWrites.has(k(path));
+}
 
 function defaultDestination(project: ProjectInfo, devices: Device[]): Destination {
   if (project.kind !== "iosApp") return { kind: "local" };
@@ -406,10 +411,10 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   async closeProject() {
-    const dirty = get().tabs.filter((p) => isDirty(p));
+    const dirty = get().tabs.filter((p) => isDirty(p) || hasPendingWrite(p));
     if (dirty.length) {
       if (get().settings?.autoSave) {
-        await get().saveAll();
+        if (!(await get().saveAll())) return false;
       } else if (!(await confirmAsk(tn("dialog.closeUnsaved", dirty.length), t("dialog.close")))) {
         return false;
       }
@@ -470,10 +475,10 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   async closeTab(path) {
-    if (isDirty(path)) {
+    if (isDirty(path) || hasPendingWrite(path)) {
       const choice = get().settings?.autoSave ? "save" : await saveChoice(basename(path));
       if (choice === "cancel") return;
-      if (choice === "save") await get().save(path);
+      if (choice === "save" && !(await get().save(path))) return;
     }
     const { tabs, active } = get();
     const idx = tabs.findIndex((p) => samePath(p, path));
@@ -494,24 +499,36 @@ export const useStore = create<Store>((set, get) => ({
 
   async save(path, options) {
     const target = path ?? get().active;
-    if (!target) return;
+    if (!target) return true;
     const doc = getDoc(target);
-    if (!doc) return;
+    if (!doc) return true;
     const prefs = get().settings;
     if (options?.format && prefs?.formatOnSave && /\.swift$/i.test(target)) {
       await formatModel(doc.model, { tabSize: prefs.tabSize ?? 4, insertSpaces: prefs.insertSpaces ?? true }).catch(() => false);
     }
+    const key = k(target);
+    while (pendingWrites.has(key)) await pendingWrites.get(key)!.catch(() => undefined);
+    if (getDoc(target) !== doc) return false;
+    const version = doc.model.getAlternativeVersionId();
     try {
-      await api.writeTextFile(target, doc.model.getValue());
-      markSaved(target);
+      const writing = api.writeTextFile(target, doc.model.getValue());
+      pendingWrites.set(key, writing);
+      await writing;
+      if (getDoc(target) !== doc) return false;
+      markSaved(target, version);
       get().touchDirty();
+      return !isDirty(target);
     } catch (e) {
       get().toast("error", t("toast.saveFailed", { error: errorMessage(e) }));
+      return false;
+    } finally {
+      pendingWrites.delete(key);
     }
   },
 
   async saveAll() {
-    await Promise.all(allDocs().filter((d) => isDirty(d.path)).map((d) => get().save(d.path)));
+    const saved = await Promise.all(allDocs().filter((d) => isDirty(d.path) || hasPendingWrite(d.path)).map((d) => get().save(d.path)));
+    return saved.every(Boolean) && allDocs().every((d) => !isDirty(d.path) && !hasPendingWrite(d.path));
   },
 
   async build(action) {
@@ -521,7 +538,7 @@ export const useStore = create<Store>((set, get) => ({
       get().toast("info", t("trust.buildBlocked"));
       return;
     }
-    await get().saveAll();
+    if (!(await get().saveAll())) return;
     const prefs = get().settings;
     set({ diagnostics: [], ...(prefs?.autoShowDebug !== false ? { debugArea: true, debugTab: "console" as const } : {}) });
     if (prefs?.clearConsoleOnBuild) set({ log: [] });
@@ -815,7 +832,7 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   async installUpdate() {
-    await get().saveAll();
+    if (!(await get().saveAll())) return;
     set({ updateState: "downloading", updateProgress: 0, updateError: null });
     try {
       await installUpdate((p) => set({ updateProgress: p }));
